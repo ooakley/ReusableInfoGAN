@@ -1,0 +1,21 @@
+{
+  "config_name": "test",
+  "dataset": "AIS-005",
+  "learning_rate": 0.0003,
+  "discopt_lr_ratio": 1,
+  "gamma": 0.001,
+  "gamma_anneal": 1,
+  "weight_init": "kaiming",
+  "zdim": 10,
+  "zdim_dist": "gaussian",
+  "seed": 10,
+  "generator": {
+    "upconv_filter_widths": [128, 64, 32, 16, 16],
+    "size_increase": "transpose",
+    "spectral_norm": false
+  },
+  "discriminator": {
+    "downconv_filter_widths": [16, 16, 32, 64, 128],
+    "spectral_norm": false
+  }
+}
