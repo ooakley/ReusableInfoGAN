@@ -36,6 +36,18 @@ def leaky_relu_kaiming_init_weights(m: Any, alpha: float = 0.1) -> None:
         nn.init.normal_(m.bias.data, 0.0, 0.02)
 
 
+def final_linear_init_weights(m: Any) -> None:
+    """Initialise weights of a module using Kaiming He initialisation."""
+    # See https://github.com/pytorch/pytorch/issues/18182 for original formulation.
+    if type(m) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d}:
+        nn.init.normal_(m.weight.data, 0, 0.01)
+        assert m.bias is None
+
+    if type(m) == nn.BatchNorm2d:
+        nn.init.normal_(m.weight.data, 1.0, 0.001)
+        nn.init.normal_(m.bias.data, 0.0, 0.001)
+
+
 class GeneratorNetwork(nn.Module):
     """Class of neural network designed to generate images from a vector of random numbers."""
 
@@ -76,7 +88,7 @@ class GeneratorNetwork(nn.Module):
 
 
 class DiscriminatorNetwork(nn.Module):
-    """Class of neural network designed to determine between real and generated images."""
+    """Class of neural network designed to distinguish between real and generated images."""
 
     def __init__(self, disc_cfg: dict) -> None:
         """Initialise network structure using config from configuation dictionary."""
@@ -119,7 +131,7 @@ class ClassificationHead(nn.Module):
         super(ClassificationHead, self).__init__()
         self.final_channels = disc_cfg["downconv_filter_widths"][4]
         self.linear = nn.Sequential(
-            nn.Linear(self.final_channels * 4 * 4, 1)
+            nn.Linear(self.final_channels * 4 * 4, 1, bias=False)
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

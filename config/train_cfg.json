@@ -1,0 +1,18 @@
+{
+    "config_name": "train_1",
+    "dataset": "2020-10-28-AIS-005",
+    "epochs": 1,
+    "batch_size": 100,
+    "learning_rate": 0.0001,
+    "discopt_lr_ratio": 1,
+    "gamma": 2,
+    "gamma_anneal": 1,
+    "zdim": 10,
+    "seed": 0,
+    "generator": {
+      "upconv_filter_widths": [128, 64, 32, 16, 16]
+    },
+    "discriminator": {
+      "downconv_filter_widths": [16, 16, 32, 64, 128]
+    }
+  }

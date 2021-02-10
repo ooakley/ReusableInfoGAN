@@ -1,6 +1,8 @@
 {
   "config_name": "test",
-  "dataset": "AIS-005",
+  "dataset": "2020-10-28-AIS-005",
+  "epochs": 1,
+  "batch_size": 100,
   "learning_rate": 0.0003,
   "discopt_lr_ratio": 1,
   "gamma": 0.001,
@@ -8,7 +10,7 @@
   "weight_init": "kaiming",
   "zdim": 10,
   "zdim_dist": "gaussian",
-  "seed": 10,
+  "seed": 0,
   "generator": {
     "upconv_filter_widths": [128, 64, 32, 16, 16],
     "size_increase": "transpose",

@@ -19,4 +19,5 @@ class FullDataset(Dataset):
     def __getitem__(self, idx: Any) -> torch.Tensor:
         """Return items from dataset as torch tensors."""
         data_selection = self.data[idx]
-        return torch.from_numpy(data_selection)
+        tensor = torch.from_numpy(data_selection)
+        return tensor

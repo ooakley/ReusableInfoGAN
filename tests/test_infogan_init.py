@@ -1,83 +1,24 @@
-"""Suite of tests for infoGAN functionality."""
+"""Suite of tests for infoGAN initialisation functionality."""
 import math
 import copy
-from typing import List
-import pytest
 import torch
 import torch.nn as nn
-import json
 import numpy as np
-# import numpy.typing as npt
-from numpy.random import default_rng
+
+from .fixtures import (
+    config_dict,
+    random_numpy_image_array,
+    random_numpy_noise_array,
+    initialised_generator,
+    initialised_discriminator,
+    initialised_class_head,
+    initialised_aux_head,
+    network_changed,
+    network_not_changed
+)
 import infogan.data_utils as data_utils
 import infogan.model as model
-
-
-@pytest.fixture
-def config_dict() -> dict:
-    with open("config/test_cfg.json") as f:
-        cfg_dict = json.load(f)
-    return cfg_dict
-
-
-@pytest.fixture
-def random_numpy_image_array() -> np.ndarray:
-    rng = default_rng(0)
-    array = rng.random((100, 1, 64, 64))
-    array = array.astype(np.float32)
-    return array
-
-
-@pytest.fixture
-def random_numpy_noise_array() -> np.ndarray:
-    rng = default_rng(0)
-    array = rng.random((100, 10))
-    array = array.astype(np.float32)
-    return array
-
-
-@pytest.fixture
-def initialised_generator(config_dict: dict) -> nn.Module:
-    # Seeding random number generation:
-    np.random.seed(config_dict["seed"])
-    torch.manual_seed(config_dict["seed"])
-    torch.set_deterministic(True)
-
-    # Instantiating and initialising model:
-    generator_instance = model.GeneratorNetwork(config_dict["zdim"], config_dict["generator"])
-    generator_instance.conv.apply(model.relu_kaiming_init_weights)
-    generator_instance.linear.apply(model.relu_kaiming_init_weights)
-    return generator_instance
-
-
-@pytest.fixture
-def initialised_discriminator(config_dict: dict) -> nn.Module:
-    # Seeding random number generation:
-    np.random.seed(config_dict["seed"])
-    torch.manual_seed(config_dict["seed"])
-    torch.set_deterministic(True)
-
-    # Instantiating and initialising model:
-    discriminator_instance = model.DiscriminatorNetwork(config_dict["discriminator"])
-    discriminator_instance.conv.apply(model.leaky_relu_kaiming_init_weights)
-    return discriminator_instance
-
-
-def network_changed(network1: nn.Module, network2: nn.Module) -> bool:
-    for param1, param2 in zip(network1.children(), network2.children()):
-        assert type(param1) == type(param2)
-        weight_different: List[bool] = []
-        bias_different: List[bool] = []
-        if type(param1) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d}:
-            weights1 = np.array(param1.weight.data.cpu())
-            weights2 = np.array(param2.weight.data.cpu())
-            bias1 = np.array(param1.bias.data.cpu())
-            bias2 = np.array(param2.bias.data.cpu())
-            assert np.all(np.equal(weights1, weights1))
-            assert np.all(np.equal(weights2, weights2))
-            weight_different.append(bool(np.all(np.not_equal(weights1, weights2))))
-            bias_different.append(bool(np.all(np.not_equal(bias1, bias2))))
-    return (all(weight_different) and all(bias_different))
+import infogan.solver as solver
 
 
 def test_dataset_load(random_numpy_image_array: np.ndarray) -> None:
@@ -100,6 +41,12 @@ def test_generator_instantiation_from_config(config_dict: dict) -> None:
 
 
 def test_generator_relu_kaiming_initialisation(config_dict: dict) -> None:
+    # Seeding random number generation:
+    np.random.seed(config_dict["seed"])
+    torch.manual_seed(config_dict["seed"])
+    torch.set_deterministic(True)
+
+    # Initialising generator:
     generator = model.GeneratorNetwork(config_dict["zdim"], config_dict["generator"])
     init_generator = copy.deepcopy(generator)
     init_generator.conv.apply(model.relu_kaiming_init_weights)
@@ -141,8 +88,8 @@ def test_generator_relu_kaiming_initialisation(config_dict: dict) -> None:
             assert np.var(np.array(m.bias.data.cpu())) == 0.0
             init_std_in_weight = np.std(np.array(init_m.weight.data.cpu()))
             init_std_in_bias = np.std(np.array(init_m.bias.data.cpu()))
-            assert math.isclose(init_std_in_weight, 0.02, abs_tol=0.008)
-            assert math.isclose(init_std_in_bias, 0.02, abs_tol=0.008)
+            assert math.isclose(init_std_in_weight, 0.02, abs_tol=0.01)
+            assert math.isclose(init_std_in_bias, 0.02, abs_tol=0.01)
 
 
 def test_generator_forward_pass(random_numpy_noise_array: np.ndarray,
@@ -178,6 +125,12 @@ def test_discriminator_instantiation_from_config(config_dict: dict) -> None:
 
 
 def test_discriminator_leaky_relu_kaiming_initialisation(config_dict: dict) -> None:
+    # Seeding random number generation:
+    np.random.seed(config_dict["seed"])
+    torch.manual_seed(config_dict["seed"])
+    torch.set_deterministic(True)
+
+    # Initialising discriminator:
     discriminator = model.DiscriminatorNetwork(config_dict["discriminator"])
     init_discriminator = copy.deepcopy(discriminator)
     init_discriminator.conv.apply(model.leaky_relu_kaiming_init_weights)
@@ -235,16 +188,17 @@ def test_head_initialisation(config_dict: dict) -> None:
 
     class_head = model.ClassificationHead(config_dict["discriminator"])
     init_class_head = copy.deepcopy(class_head)
-    init_class_head.linear.apply(model.leaky_relu_kaiming_init_weights)
+    init_class_head.linear.apply(model.final_linear_init_weights)
 
     assert network_changed(auxiliary_head.linear, init_auxiliary_head.linear)
     assert network_changed(class_head.linear, init_class_head.linear)
 
 
-def test_discriminator_class_head_integration(random_numpy_image_array: np.ndarray,
-                                              initialised_discriminator: nn.Module,
-                                              config_dict: dict
-                                              ) -> None:
+def test_discriminator_class_head_integration(
+        random_numpy_image_array: np.ndarray,
+        initialised_discriminator: nn.Module,
+        config_dict: dict
+        ) -> None:
     discriminator_output = initialised_discriminator(torch.from_numpy(random_numpy_image_array))
     class_head = model.ClassificationHead(config_dict["discriminator"])
     with torch.no_grad():
@@ -254,10 +208,11 @@ def test_discriminator_class_head_integration(random_numpy_image_array: np.ndarr
         assert math.isclose(probability_logit.mean().item(), 0, abs_tol=0.1)
 
 
-def test_discriminator_auxiliary_head_integration(random_numpy_image_array: np.ndarray,
-                                                  initialised_discriminator: nn.Module,
-                                                  config_dict: dict
-                                                  ) -> None:
+def test_discriminator_auxiliary_head_integration(
+        random_numpy_image_array: np.ndarray,
+        initialised_discriminator: nn.Module,
+        config_dict: dict
+        ) -> None:
     discriminator_output = initialised_discriminator(torch.from_numpy(random_numpy_image_array))
     auxiliary_head = model.AuxiliaryHead(config_dict)
     with torch.no_grad():
@@ -267,5 +222,50 @@ def test_discriminator_auxiliary_head_integration(random_numpy_image_array: np.n
         assert math.isclose(predicted_codes.mean().item(), 0, abs_tol=0.1)
 
 
-def test_full_network_integration(random_numpy_noise_array: np.ndarray) -> None:
-    pass
+def test_full_network_integration(
+        random_numpy_noise_array: np.ndarray, initialised_generator: nn.Module,
+        initialised_discriminator: nn.Module, initialised_aux_head: nn.Module,
+        initialised_class_head: nn.Module
+        ) -> None:
+    # Generator step:
+    fake_image = initialised_generator(torch.Tensor(random_numpy_noise_array))
+    assert fake_image is not None
+    assert math.isclose(torch.mean(fake_image).item(), 0.5, abs_tol=0.2)
+
+    # Discriminator step:
+    discriminator_features = initialised_discriminator(fake_image)
+    assert discriminator_features is not None
+    assert math.isclose(torch.mean(discriminator_features).item(), 0, abs_tol=0.2)
+
+    # Classification step:
+    probability_logit = initialised_class_head(discriminator_features)
+    assert probability_logit is not None
+    assert math.isclose(torch.mean(probability_logit).item(), 0, abs_tol=0.4)
+
+    # Latent codes step:
+    latent_codes = initialised_aux_head(discriminator_features)
+    assert latent_codes is not None
+    assert math.isclose(torch.mean(latent_codes).item(), 0, abs_tol=0.2)
+
+
+def test_handler_instantiation(
+        config_dict: dict, initialised_generator: nn.Module,
+        initialised_discriminator: nn.Module, initialised_aux_head: nn.Module,
+        initialised_class_head: nn.Module
+        ) -> None:
+    full_model = solver.InfoGANHandler(config_dict)
+    assert network_not_changed(
+        full_model.generator.linear, initialised_generator.linear
+    )
+    assert network_not_changed(
+        full_model.generator.conv, initialised_generator.conv
+    )
+    assert network_not_changed(
+        full_model.discriminator.conv, initialised_discriminator.conv
+    )
+    assert network_not_changed(
+        full_model.class_head.linear, initialised_class_head.linear
+    )
+    assert network_not_changed(
+        full_model.aux_head.linear, initialised_aux_head.linear
+    )
