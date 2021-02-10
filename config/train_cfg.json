@@ -10,9 +10,9 @@
     "zdim": 10,
     "seed": 0,
     "generator": {
-      "upconv_filter_widths": [128, 64, 32, 16, 16]
+        "upconv_filter_widths": [128, 64, 32, 16, 16]
     },
     "discriminator": {
-      "downconv_filter_widths": [16, 16, 32, 64, 128]
+        "downconv_filter_widths": [16, 16, 32, 64, 128]
     }
-  }
+}

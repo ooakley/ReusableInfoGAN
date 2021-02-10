@@ -1,7 +1,6 @@
 """Contains class for handling save/load logic, training and inference for the infoGAN model."""
 import os
 import json
-import time
 from datetime import datetime
 from typing import Tuple, List
 
@@ -57,11 +56,7 @@ class InfoGANHandler:
         if not os.path.isdir(log_dir):
             os.mkdir(log_dir)
         self.date_str = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
-        log_path = os.path.join(log_dir, self.date_str)
-        while os.path.isdir(log_path):
-            time.sleep(3)
-            self.date_str = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
-            log_path = os.path.join(log_dir, self.date_str)
+        log_path = os.path.join(log_dir, f"{self.date_str}-{config_dict['config_name']}")
         if not os.path.isdir(log_path):
             os.mkdir(log_path)
         self.log_path = log_path

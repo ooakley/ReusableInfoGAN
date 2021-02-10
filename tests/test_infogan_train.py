@@ -1,4 +1,5 @@
 """Suite of unit tests for infoGAN training functionality."""
+import os
 import copy
 import math
 import numpy as np
@@ -44,6 +45,10 @@ def test_discriminator_train(
     assert network_not_changed(full_infogan.generator.conv, infogan_to_update.generator.conv)
     assert network_not_changed(full_infogan.aux_head.linear, infogan_to_update.aux_head.linear)
 
+    # Clean up:
+    os.remove(os.path.join(full_infogan.log_path, "cfg.json"))
+    os.rmdir(full_infogan.log_path)
+
 
 def test_generator_train(
         full_infogan: solver.InfoGANHandler, random_numpy_image_array: np.ndarray,
@@ -75,3 +80,7 @@ def test_generator_train(
     assert network_not_changed(full_infogan.class_head.linear, infogan_to_update.class_head.linear)
     assert network_changed(full_infogan.generator.conv, infogan_to_update.generator.conv)
     assert network_changed(full_infogan.aux_head.linear, infogan_to_update.aux_head.linear)
+
+    # Clean up:
+    os.remove(os.path.join(full_infogan.log_path, "cfg.json"))
+    os.rmdir(full_infogan.log_path)

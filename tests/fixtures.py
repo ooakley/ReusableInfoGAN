@@ -89,7 +89,7 @@ def initialised_aux_head(config_dict: dict) -> nn.Module:
 
 @pytest.fixture
 def full_infogan(config_dict: dict) -> solver.InfoGANHandler:
-    infogan_instance = solver.InfoGANHandler(config_dict, logging=False)
+    infogan_instance = solver.InfoGANHandler(config_dict)
     return infogan_instance
 
 
