@@ -3,6 +3,7 @@ import json
 import argparse
 from typing import Any, List
 
+import torch
 import numpy as np
 
 from . import data_utils, solver, plotter
@@ -24,6 +25,7 @@ def generate_dataset(path_to_data: str) -> data_utils.FullDataset:
     for f in numpy_files:
         path = os.path.join(path_to_data, f)
         data = np.expand_dims(np.load(path)[:, :, :, 1], 1).astype(np.float32)
+        data = (data * 2) - 1
         numpy_dataset.append(data)
     dataset = data_utils.FullDataset(np.concatenate(numpy_dataset, axis=0))
     return dataset
@@ -37,6 +39,9 @@ def main() -> None:
     with open(config_path) as f:
         config_dict = json.load(f)
 
+    # Setting device:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # Loading dataset:
     print("Loading dataset...")
     numpy_data_path = os.path.join("data", "numpy_datasets", config_dict["dataset"])
@@ -44,17 +49,19 @@ def main() -> None:
 
     # Instantiating handler:
     print("Initialising model...")
-    handler = solver.InfoGANHandler(config_dict)
+    handler = solver.InfoGANHandler(config_dict, device=device)
 
     # Training model:
     print("Training model...")
     for i in range(config_dict["epochs"]):
         handler.train_on_epoch(dataset, config_dict["batch_size"])
+        print(i + 1)
 
     # Running plotter:
     infogan_plotter = plotter.InfoGANPlotter(handler)
     infogan_plotter.plot_loss_history()
     infogan_plotter.plot_generated_images(dataset[0:100])
+    infogan_plotter.plot_gradient_history()
 
 
 main()

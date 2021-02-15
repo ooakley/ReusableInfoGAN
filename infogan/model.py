@@ -1,51 +1,11 @@
 """Implementation of model methods."""
 import math
-from typing import Any
+import typing
+from typing import Any, List
+
+import numpy as np
 import torch
 import torch.nn as nn
-
-
-def relu_kaiming_init_weights(m: Any) -> None:
-    """Initialise weights of a module using Kaiming He initialisation."""
-    # See https://github.com/pytorch/pytorch/issues/18182 for original formulation.
-    if type(m) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d}:
-        nn.init.kaiming_normal_(m.weight.data, a=0, mode="fan_out", nonlinearity="relu")
-        if m.bias is not None:
-            fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(m.weight.data)
-            std = 1 / math.sqrt(fan_out)
-            nn.init.normal_(m.bias.data, 0, std)
-
-    if type(m) == nn.BatchNorm2d:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.normal_(m.bias.data, 0.0, 0.02)
-
-
-def leaky_relu_kaiming_init_weights(m: Any, alpha: float = 0.1) -> None:
-    """Initialise weights of a module using Kaiming He initialisation."""
-    # See https://github.com/pytorch/pytorch/issues/18182 for original formulation.
-    if type(m) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d}:
-        nn.init.kaiming_normal_(m.weight.data, a=alpha, mode="fan_out", nonlinearity="leaky_relu")
-        if m.bias is not None:
-            fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(m.weight.data)
-            gain = nn.init.calculate_gain('leaky_relu', alpha)
-            std = gain / math.sqrt(fan_out)
-            nn.init.normal_(m.bias.data, 0, std)
-
-    if type(m) == nn.BatchNorm2d:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.normal_(m.bias.data, 0.0, 0.02)
-
-
-def final_linear_init_weights(m: Any) -> None:
-    """Initialise weights of a module using Kaiming He initialisation."""
-    # See https://github.com/pytorch/pytorch/issues/18182 for original formulation.
-    if type(m) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d}:
-        nn.init.normal_(m.weight.data, 0, 0.01)
-        assert m.bias is None
-
-    if type(m) == nn.BatchNorm2d:
-        nn.init.normal_(m.weight.data, 1.0, 0.001)
-        nn.init.normal_(m.bias.data, 0.0, 0.001)
 
 
 class GeneratorNetwork(nn.Module):
@@ -76,8 +36,8 @@ class GeneratorNetwork(nn.Module):
             nn.ReLU(),
             nn.BatchNorm2d(filter_widths[4]),
 
-            nn.ConvTranspose2d(filter_widths[4], 1, 1, 1, 0),
-            nn.Sigmoid()
+            nn.ConvTranspose2d(filter_widths[4], 1, 3, 1, 1),
+            nn.Tanh()
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -93,28 +53,28 @@ class DiscriminatorNetwork(nn.Module):
     def __init__(self, disc_cfg: dict) -> None:
         """Initialise network structure using config from configuation dictionary."""
         super(DiscriminatorNetwork, self).__init__()
-        filter_widths = disc_cfg["downconv_filter_widths"]
+        filter_widths: List[int] = disc_cfg["downconv_filter_widths"]
         self.final_channels = filter_widths[4]
         self.conv = nn.Sequential(
             nn.Conv2d(1, filter_widths[0], 1, 1, 0),
-            nn.LeakyReLU(0.1),
-            nn.BatchNorm2d(filter_widths[0]),
+            nn.LeakyReLU(0.2),
+            nn.LayerNorm([filter_widths[0], 64, 64]),
 
             nn.Conv2d(filter_widths[0], filter_widths[1], 3, 2, 1),
-            nn.LeakyReLU(0.1),
-            nn.BatchNorm2d(filter_widths[1]),
+            nn.LeakyReLU(0.2),
+            nn.LayerNorm([filter_widths[1], 32, 32]),
 
             nn.Conv2d(filter_widths[1], filter_widths[2], 3, 2, 1),
-            nn.LeakyReLU(0.1),
-            nn.BatchNorm2d(filter_widths[2]),
+            nn.LeakyReLU(0.2),
+            nn.LayerNorm([filter_widths[2], 16, 16]),
 
             nn.Conv2d(filter_widths[2], filter_widths[3], 3, 2, 1),
-            nn.LeakyReLU(0.1),
-            nn.BatchNorm2d(filter_widths[3]),
+            nn.LeakyReLU(0.2),
+            nn.LayerNorm([filter_widths[3], 8, 8]),
 
             nn.Conv2d(filter_widths[3], filter_widths[4], 3, 2, 1),
-            nn.LeakyReLU(0.1),
-            nn.BatchNorm2d(filter_widths[4]),
+            nn.LeakyReLU(0.2),
+            nn.LayerNorm([filter_widths[4], 4, 4]),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -149,7 +109,7 @@ class AuxiliaryHead(nn.Module):
         self.zdim = cfg["zdim"]
         self.linear = nn.Sequential(
             nn.Linear(self.final_channels * 4 * 4, 512),
-            nn.LeakyReLU(0.1),
+            nn.LeakyReLU(0.2),
             nn.BatchNorm1d(512),
             nn.Linear(512, self.zdim)
         )

@@ -1,23 +1,27 @@
 """Contains class for handling save/load logic, training and inference for the infoGAN model."""
 import os
+import copy
 import json
 from datetime import datetime
-from typing import Tuple, List
+from typing import Tuple, List, Union, Iterator
 
 import torch
 import torch.nn as nn
 import numpy as np
 
-from . import model
+from infogan import model, initialisations
 
 
 class InfoGANHandler:
     """Encapsulates infoGAN training."""
 
-    def __init__(self, config_dict: dict, use_logs: bool = True) -> None:
+    def __init__(
+            self, config_dict: dict, use_logs: bool = True,
+            device: Union[str, torch.device] = "cpu") -> None:
         # Initial seed number:
         torch.set_deterministic(True)
         self.seed = config_dict["seed"]
+        self.device = device
 
         # Initialising model parameters:
         self._init_networks(config_dict)
@@ -44,6 +48,8 @@ class InfoGANHandler:
             self._set_logs(config_dict)
         self.loss_history: List[List[float]] = []
         self.epochs_performed = 0
+        self.discriminator_grad_history: List[List[Tuple[str, bool, torch.Tensor]]] = []
+        self.generator_grad_history: List[List[Tuple[str, bool, torch.Tensor]]] = []
 
     def _set_seed(self, seed: int = None) -> None:
         if seed is None:
@@ -61,43 +67,48 @@ class InfoGANHandler:
             os.mkdir(log_path)
         self.log_path = log_path
         with open(os.path.join(log_path, "cfg.json"), "w") as f:
-            json.dump(config_dict, f)
+            json.dump(config_dict, f, indent=4)
 
     def _init_networks(self, config_dict: dict) -> None:
         # Initialise generator:
         self._set_seed()
         self.generator = model.GeneratorNetwork(config_dict["zdim"], config_dict["generator"])
-        self.generator.linear.apply(model.relu_kaiming_init_weights)
-        self.generator.conv.apply(model.relu_kaiming_init_weights)
+        self.generator.linear.apply(initialisations.gen_linear_init_weights)
+        self.generator.conv.apply(initialisations.gen_relu_init_weights)
+        initialisations.gen_tanh_init_weights(self.generator.conv[-2])
+        self.generator.to(self.device)
 
         # Initialise discriminator:
         self._set_seed()
         self.discriminator = model.DiscriminatorNetwork(config_dict["discriminator"])
-        self.discriminator.conv.apply(model.leaky_relu_kaiming_init_weights)
+        self.discriminator.conv.apply(initialisations.disc_lrelu_init_weights)
+        initialisations.disc_lrelu_init_weights(self.discriminator.conv[0])
+        initialisations.disc_lrelu_init_weights(self.discriminator.conv[2])
+        self.discriminator.to(self.device)
 
         # Initialise classification head:
         self._set_seed()
         self.class_head = model.ClassificationHead(config_dict["discriminator"])
-        self.class_head.linear.apply(model.final_linear_init_weights)
+        self.class_head.linear.apply(initialisations.disc_sigmoid_init_weights)
+        self.class_head.to(self.device)
 
         # Initialise auxiliary head:
         self._set_seed()
         self.aux_head = model.AuxiliaryHead(config_dict)
-        self.aux_head.linear.apply(model.leaky_relu_kaiming_init_weights)
+        self.aux_head.linear.apply(lambda x: initialisations.disc_lrelu_init_weights(x, alpha=0.2))
+        initialisations.disc_sigmoid_init_weights(self.aux_head.linear[-1], gain=0.3)
+        self.aux_head.to(self.device)
 
-    def calculate_loss(
-            self, real_images: torch.Tensor, noise_vector: torch.Tensor
-            ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def calculate_discriminator_loss(
+            self, real_images: torch.Tensor, fake_images: torch.Tensor
+            ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Calculate full discriminator loss from real image input."""
         # Calculating discriminator loss on real images:
         real_features = self.discriminator(real_images)
         real_probability_logit = self.class_head(real_features)
         real_loss = self.bce_logits_loss(
-            real_probability_logit, torch.ones(100, 1)
+            real_probability_logit, torch.ones_like(real_probability_logit)
         ).mean()
-
-        # Generating fake images:
-        fake_images = self.generator(noise_vector)
 
         # Generating discrimimator loss on fake images:
         fake_features = self.discriminator(fake_images)
@@ -114,16 +125,7 @@ class InfoGANHandler:
             fake_images, fake_probability_logit
         )
 
-        # Generator classification loss - note the change to torch.ones_like:
-        gen_class_loss = self.bce_logits_loss(
-            fake_probability_logit, torch.ones_like(fake_probability_logit)
-        ).mean()
-
-        # Generator info loss:
-        predicted_codes = self.aux_head(fake_features)
-        gen_info_loss = self.mse_loss(predicted_codes, noise_vector).mean()
-
-        return disc_class_loss, disc_regularisation, gen_class_loss, gen_info_loss
+        return disc_class_loss, disc_regularisation
 
     def _calculate_discriminator_regularisation(
             self,
@@ -132,10 +134,14 @@ class InfoGANHandler:
             ) -> torch.Tensor:
         # Calculating gradients of logits w/r/t image inputs:
         real_gradients = torch.autograd.grad(
-            real_logits, real_images, grad_outputs=torch.ones_like(real_logits), retain_graph=True
+            real_logits, real_images, grad_outputs=torch.ones_like(real_logits),
+            retain_graph=True,
+            create_graph=True
         )[0]
         fake_gradients = torch.autograd.grad(
-            fake_logits, fake_images, grad_outputs=torch.ones_like(real_logits), retain_graph=True
+            fake_logits, fake_images, grad_outputs=torch.zeros_like(real_logits),
+            retain_graph=True,
+            create_graph=True
         )[0]
 
         # Calculating the L2 norm of these gradients:
@@ -161,25 +167,65 @@ class InfoGANHandler:
 
         return torch.mean(real_reg + fake_reg, dim=0)
 
+    def calculate_generator_loss(
+            self, fake_images: torch.Tensor, noise_vector: torch.Tensor
+            ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Calculate full generator loss from fake image input."""
+        # Generator classification loss - note the change to torch.ones_like:
+        fake_features = self.discriminator(fake_images)
+        fake_probability_logit = self.class_head(fake_features)
+        gen_class_loss = self.bce_logits_loss(
+            fake_probability_logit, torch.ones_like(fake_probability_logit)
+        ).mean()
+
+        # Generator info loss:
+        predicted_codes = self.aux_head(fake_features)
+        gen_info_loss = self.mse_loss(predicted_codes, noise_vector).mean()
+
+        return gen_class_loss, gen_info_loss
+
     def train_on_batch(self, real_images: torch.Tensor, noise_vector: torch.Tensor) -> None:
         """Train all networks on batch of images."""
-        # Calculating loss:
-        disc_class_loss, disc_regularisation, gen_class_loss, gen_info_loss = \
-            self.calculate_loss(real_images, noise_vector)
+        # Generating fake images:
+        fake_images = self.generator(noise_vector)
+
+        # Calculating discriminator loss:
+        disc_class_loss, disc_regularisation = \
+                self.calculate_discriminator_loss(real_images, fake_images)
 
         # Accumulating discriminator gradients:
         discriminator_loss = disc_class_loss + disc_regularisation
         self.discriminator_opt.zero_grad(set_to_none=True)
-        discriminator_loss.backward(retain_graph=True)
+        discriminator_loss.backward()
+        self.discriminator_opt.step()
+
+        # Detaching & recording gradients:
+        if self.epochs_performed == 0:
+            self.discriminator_grad_history.append(
+                [
+                    copy.deepcopy((n, p.requires_grad, p.grad.detach().abs().mean().cpu())) \
+                    for n, p in self.discriminator.named_parameters()
+                ]
+            )
 
         # Accumulating generator gradients:
+        noise_vector.requires_grad = True
+        fake_images = self.generator(noise_vector)
+        gen_class_loss, gen_info_loss = \
+            self.calculate_generator_loss(fake_images, noise_vector)
         generator_loss = gen_class_loss + gen_info_loss
         self.generator_opt.zero_grad(set_to_none=True)
         generator_loss.backward()
-
-        # Updating weights
-        self.discriminator_opt.step()
         self.generator_opt.step()
+
+        # Detaching and recording gradients:
+        if self.epochs_performed == 0:
+            self.generator_grad_history.append(
+                [
+                    copy.deepcopy((n, p.requires_grad, p.grad.detach().abs().mean().cpu())) \
+                    for n, p in self.generator.named_parameters()
+                ]
+            )
 
         # Updating history:
         self.loss_history.append([
@@ -190,11 +236,19 @@ class InfoGANHandler:
     def train_on_epoch(self, dataset: torch.utils.data.Dataset, batch_size: int = 100) -> None:
         """Train all networks on given dataset for one epoch."""
         self._set_seed(self.seed + self.epochs_performed)
+
+        # Initialising dataloader:
         dataloader = torch.utils.data.DataLoader(
             dataset, batch_size=batch_size, shuffle=True, num_workers=4
         )
+
+        # Iterating through batches of real images:
         for real_images in dataloader:
+            real_images = real_images.to(self.device)
             real_images.requires_grad = True
-            noise_vector = torch.randn(batch_size, self.zdim)
+            noise_vector = torch.randn(real_images.shape[0], self.zdim)
+            noise_vector = noise_vector.to(self.device)
             self.train_on_batch(real_images, noise_vector)
+        
+        # Updating epoch tracker:
         self.epochs_performed += 1

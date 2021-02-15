@@ -1,26 +1,58 @@
 """Class for methods useful for ouputting metrics related to infoGAN performance."""
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Iterator, Tuple
+
 
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from torchvision.utils import save_image
 
-from .solver import InfoGANHandler
+from infogan import solver
+
+
+class GradientTracker:
+
+    def __init__(self) -> None:
+        self.fig, self.ax = plt.subplots()
+        self.initialised: bool = False
+
+    def update_gradient_plot(self, named_parameters: List[Tuple[str, bool, torch.Tensor]]) -> None:
+        ave_grads = []
+        layers = []
+        for n, p_req_grad, p_grad in named_parameters:
+            if(p_req_grad) and ("bias" not in n):
+                layers.append(n)
+                ave_grads.append(p_grad)
+        if not self.initialised:
+            self.ax.plot(ave_grads, alpha=0.3, color="b")
+            self.ax.hlines(0, 0, len(ave_grads)+1, linewidth=1, color="k" )
+            self.ax.set_xticks(range(0, len(ave_grads), 1))
+            self.ax.set_xticklabels(layers, rotation="vertical")
+            self.ax.set_xlim(xmin=0, xmax=len(ave_grads) - 1)
+            self.ax.set_xlabel("Layers")
+            self.ax.set_ylabel("Average gradient")
+            self.ax.set_title("Gradient flow")
+            self.ax.grid(True)
+        if self.initialised:
+            self.ax.plot(ave_grads, alpha=0.3, color="b")
+
+    def save_gradient_plot(self, path: str) -> None:
+        self.fig.tight_layout()
+        self.fig.savefig(path, dpi=300)
+        plt.close(self.fig)
 
 
 class InfoGANPlotter:
     """Class to encapsulate methods for generate infoGAN metrics."""
 
-    def __init__(self, model: InfoGANHandler) -> None:
+    def __init__(self, model: solver.InfoGANHandler) -> None:
         """Initialise plotter with trained model."""
         self.model = model
         self.log_path = model.log_path
         self.loss_history = model.loss_history
         self.metadata = {
-            "user": os.getlogin(),
             "date": datetime.now().strftime("%Y-%m-%d-%H:%M:%S"),
             "model": f"infogan-{model.date_str}",
             "source_code": "https://github.com/ooakley/ReusableInfoGAN"
@@ -70,8 +102,9 @@ class InfoGANPlotter:
     def plot_generated_images(self, real_images: torch.Tensor) -> None:
         """Save plots of real images and the network's reconstruction of these images."""
         # Saving original set of images:
+        real_images = real_images.to(self.model.device)
         original_filepath = os.path.join(self.log_path, "original_images.png")
-        save_image(real_images, original_filepath, nrow=10)
+        save_image(real_images, original_filepath, nrow=10, normalize=True, range=(-1, 1))
 
         # Finding latent codes:
         self.model.discriminator.eval()
@@ -82,4 +115,29 @@ class InfoGANPlotter:
         # Generating fake images:
         fake_images = self.model.generator(latent_codes)
         generated_filepath = os.path.join(self.log_path, "generated_images.png")
-        save_image(fake_images, generated_filepath, nrow=10)
+        save_image(fake_images, generated_filepath, nrow=10, normalize=True, range=(-1, 1))
+
+    def plot_gradient_history(self, path: str = None) -> None:
+        """Save plots of gradient history across different layers."""
+        # Defining filepaths:
+        if path is None:
+            disc_filepath = os.path.join(self.log_path, "disc_grad.png")
+            gen_filepath = os.path.join(self.log_path, "gen_grad.png")
+        if path is not None:
+            disc_filepath = os.path.join(path, "disc_grad.png")
+            gen_filepath = os.path.join(path, "gen_grad.png")
+
+        # Instantiating plotters:
+        disc_tracker = GradientTracker()
+        gen_tracker = GradientTracker()
+
+        # Plotting gradients:
+        for disc_params, gen_params in zip(
+                self.model.discriminator_grad_history, self.model.generator_grad_history
+                ):
+            disc_tracker.update_gradient_plot(disc_params)
+            gen_tracker.update_gradient_plot(gen_params)
+
+        # Saving to file:
+        disc_tracker.save_gradient_plot(disc_filepath)
+        gen_tracker.save_gradient_plot(gen_filepath)

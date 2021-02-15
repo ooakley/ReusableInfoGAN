@@ -1,8 +1,12 @@
 """Suite of tests for infoGAN initialisation functionality."""
+import os
 import math
 import copy
+import typing
+
 import torch
 import torch.nn as nn
+from torchvision.utils import save_image
 import numpy as np
 
 from .fixtures import (
@@ -19,6 +23,7 @@ from .fixtures import (
 import infogan.data_utils as data_utils
 import infogan.model as model
 import infogan.solver as solver
+import infogan.initialisations as initialisations
 
 
 def test_dataset_load(random_numpy_image_array: np.ndarray) -> None:
@@ -32,15 +37,15 @@ def test_dataset_load(random_numpy_image_array: np.ndarray) -> None:
 
 def test_generator_instantiation_from_config(config_dict: dict) -> None:
     generator = model.GeneratorNetwork(config_dict["zdim"], config_dict["generator"])
-    # initial dense layer parameters = 20,480 + 2048 (bias)
+    # initial dense layer parameters = 20,480 + 2048 (bias) + 128 extra final conv
     # convolution parameters = 99,088 + 129 (bias)
     # batch norm parameters = 256
     # total parameters = 122,001
     parameter_number = sum(p.numel() for p in generator.parameters())
-    assert parameter_number == 122001, str(parameter_number)
+    assert parameter_number == 122129, str(parameter_number)
 
 
-def test_generator_relu_kaiming_initialisation(config_dict: dict) -> None:
+def test_generator_relu_initialisation(config_dict: dict) -> None:
     # Seeding random number generation:
     np.random.seed(config_dict["seed"])
     torch.manual_seed(config_dict["seed"])
@@ -49,47 +54,17 @@ def test_generator_relu_kaiming_initialisation(config_dict: dict) -> None:
     # Initialising generator:
     generator = model.GeneratorNetwork(config_dict["zdim"], config_dict["generator"])
     init_generator = copy.deepcopy(generator)
-    init_generator.conv.apply(model.relu_kaiming_init_weights)
-    init_generator.linear.apply(model.relu_kaiming_init_weights)
+    init_generator.linear.apply(initialisations.gen_linear_init_weights)
+    init_generator.conv.apply(initialisations.gen_relu_init_weights)
+    initialisations.gen_tanh_init_weights(init_generator.conv[-2])
 
     # Asserting that number of found modules is as expected:
     assert sum(1 for _ in generator.children()) == 2
     assert sum(1 for _ in generator.linear.children()) == 1
     assert sum(1 for _ in generator.conv.children()) == 14
 
-    # Asserting initialisation changes weights of linear network:
-    for m, init_m in zip(generator.linear.children(), init_generator.linear.children()):
-        assert type(m) == type(init_m)
-        if type(m) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d}:
-            orig_weights = np.array(m.weight.data.cpu())
-            init_weights = np.array(init_m.weight.data.cpu())
-            orig_bias = np.array(m.bias.data.cpu())
-            init_bias = np.array(init_m.bias.data.cpu())
-            assert np.all(np.equal(orig_weights, orig_weights))
-            assert np.all(np.not_equal(orig_weights, init_weights))
-            assert np.all(np.not_equal(orig_bias, init_bias))
-
-        assert type(m) != nn.BatchNorm2d
-
-    # Asserting initialisation changes weights of convolutional network:
-    for m, init_m in zip(generator.conv.children(), init_generator.conv.children()):
-        assert type(m) == type(init_m)
-        if type(m) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d}:
-            orig_weights = np.array(m.weight.data.cpu())
-            init_weights = np.array(init_m.weight.data.cpu())
-            orig_bias = np.array(m.bias.data.cpu())
-            init_bias = np.array(init_m.bias.data.cpu())
-            assert np.all(np.equal(orig_weights, orig_weights))
-            assert np.all(np.not_equal(orig_weights, init_weights))
-            assert np.all(np.not_equal(orig_bias, init_bias))
-
-        if type(m) == nn.BatchNorm2d:
-            assert np.var(np.array(m.weight.data.cpu())) == 0.0
-            assert np.var(np.array(m.bias.data.cpu())) == 0.0
-            init_std_in_weight = np.std(np.array(init_m.weight.data.cpu()))
-            init_std_in_bias = np.std(np.array(init_m.bias.data.cpu()))
-            assert math.isclose(init_std_in_weight, 0.02, abs_tol=0.01)
-            assert math.isclose(init_std_in_bias, 0.02, abs_tol=0.01)
+    assert network_changed(generator.linear, init_generator.linear)
+    assert network_changed(generator.conv, init_generator.conv)
 
 
 def test_generator_forward_pass(random_numpy_noise_array: np.ndarray,
@@ -97,13 +72,17 @@ def test_generator_forward_pass(random_numpy_noise_array: np.ndarray,
                                 ) -> None:
     output = initialised_generator(torch.from_numpy(random_numpy_noise_array))
     assert output.shape == (100, 1, 64, 64)
+    np_output = output.detach().cpu().numpy()
 
-    upper_quartile_out = np.quantile(output.detach().cpu().numpy(), 0.75)
-    lower_quartile_out = np.quantile(output.detach().cpu().numpy(), 0.25)
-    mean_out = np.mean(output.detach().cpu().numpy())
-    assert math.isclose(mean_out, 0.5, abs_tol=0.1)
-    assert lower_quartile_out < 0.4
-    assert upper_quartile_out > 0.4
+    # Performing test:
+    upper_quartile_out = np.quantile(np_output, 0.75)
+    lower_quartile_out = np.quantile(np_output, 0.25)
+    mean_out = np.mean(np_output)
+    assert math.isclose(mean_out, 0, abs_tol=0.15)
+    assert np.max(np_output) <= 1
+    assert np.min(np_output) >= -1
+    assert math.isclose(lower_quartile_out, -upper_quartile_out, abs_tol=0.25)
+    assert math.isclose(upper_quartile_out, -lower_quartile_out, abs_tol=0.25)
 
     # TODO: Work out meaningful assertsions to make here - first attempt:
     # 0.67448 is the analytical upper quartile of an N~(1, 0) distribution - which is what we expect
@@ -120,11 +99,12 @@ def test_discriminator_instantiation_from_config(config_dict: dict) -> None:
     # convolution parameters = 99,088 + 256 (bias)
     # batch norm parameters = 256
     # total parameters = 99,473
+    # Plus extra params from LayerNorm
     parameter_number = sum(p.numel() for p in discriminator.parameters())
-    assert parameter_number == 99856, str(parameter_number)
+    assert parameter_number == 291856, str(parameter_number)
 
 
-def test_discriminator_leaky_relu_kaiming_initialisation(config_dict: dict) -> None:
+def test_discriminator_leaky_relu_initialisation(config_dict: dict) -> None:
     # Seeding random number generation:
     np.random.seed(config_dict["seed"])
     torch.manual_seed(config_dict["seed"])
@@ -133,31 +113,16 @@ def test_discriminator_leaky_relu_kaiming_initialisation(config_dict: dict) -> N
     # Initialising discriminator:
     discriminator = model.DiscriminatorNetwork(config_dict["discriminator"])
     init_discriminator = copy.deepcopy(discriminator)
-    init_discriminator.conv.apply(model.leaky_relu_kaiming_init_weights)
+    init_discriminator.conv.apply(initialisations.disc_lrelu_init_weights)
+    initialisations.disc_lrelu_init_weights(init_discriminator.conv[0])
+    initialisations.disc_lrelu_init_weights(init_discriminator.conv[2])
 
     # Asserting that number of found modules is as expected:
     assert sum(1 for _ in discriminator.children()) == 1
     assert sum(1 for _ in discriminator.conv.children()) == 15
 
     # Asserting initialisation changes weights of convolutional network:
-    for m, init_m in zip(discriminator.conv.children(), init_discriminator.conv.children()):
-        assert type(m) == type(init_m)
-        if type(m) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d}:
-            orig_weights = np.array(m.weight.data.cpu())
-            init_weights = np.array(init_m.weight.data.cpu())
-            orig_bias = np.array(m.bias.data.cpu())
-            init_bias = np.array(init_m.bias.data.cpu())
-            assert np.any(np.equal(orig_weights, orig_weights))
-            assert np.any(np.not_equal(orig_weights, init_weights))
-            assert np.any(np.not_equal(orig_bias, init_bias))
-
-        if type(m) == nn.BatchNorm2d:
-            assert np.var(np.array(m.weight.data.cpu())) == 0.0
-            assert np.var(np.array(m.bias.data.cpu())) == 0.0
-            init_std_in_weight = np.std(np.array(init_m.weight.data.cpu()))
-            init_std_in_bias = np.std(np.array(init_m.bias.data.cpu()))
-            assert math.isclose(init_std_in_weight, 0.02, abs_tol=0.01)
-            assert math.isclose(init_std_in_bias, 0.02, abs_tol=0.01)
+    assert network_changed(discriminator.conv, init_discriminator.conv)
 
 
 def test_discriminator_forward_pass(random_numpy_image_array: np.ndarray,
@@ -168,9 +133,9 @@ def test_discriminator_forward_pass(random_numpy_image_array: np.ndarray,
     upper_quartile_out = np.quantile(output.detach().cpu().numpy(), 0.75)
     lower_quartile_out = np.quantile(output.detach().cpu().numpy(), 0.25)
     mean_out = np.mean(output.detach().cpu().numpy())
-    assert mean_out > 0
-    assert lower_quartile_out < 0
-    assert upper_quartile_out > 0.3
+    assert math.isclose(mean_out, 0, abs_tol=0.1)
+    assert lower_quartile_out < -0.1
+    assert upper_quartile_out > 0.1
 
     # TODO: Work out meaningful assertsions to make here - first attempt:
     # 0.67448 is the analytical upper quartile of an N~(1, 0) distribution which is what we expect
@@ -182,13 +147,16 @@ def test_discriminator_forward_pass(random_numpy_image_array: np.ndarray,
 
 
 def test_head_initialisation(config_dict: dict) -> None:
-    auxiliary_head = model.AuxiliaryHead(config_dict)
-    init_auxiliary_head = copy.deepcopy(auxiliary_head)
-    init_auxiliary_head.linear.apply(model.relu_kaiming_init_weights)
-
     class_head = model.ClassificationHead(config_dict["discriminator"])
     init_class_head = copy.deepcopy(class_head)
-    init_class_head.linear.apply(model.final_linear_init_weights)
+    init_class_head.linear.apply(initialisations.disc_sigmoid_init_weights)
+
+    auxiliary_head = model.AuxiliaryHead(config_dict)
+    init_auxiliary_head = copy.deepcopy(auxiliary_head)
+    init_auxiliary_head.linear.apply(
+        lambda x: initialisations.disc_lrelu_init_weights(x, alpha=0.2)
+    )
+    initialisations.disc_sigmoid_init_weights(init_auxiliary_head.linear[-1], gain=0.3)
 
     assert network_changed(auxiliary_head.linear, init_auxiliary_head.linear)
     assert network_changed(class_head.linear, init_class_head.linear)
@@ -205,7 +173,7 @@ def test_discriminator_class_head_integration(
         probability_logit = class_head(discriminator_output)
         assert probability_logit is not None
         assert probability_logit.size() == (100, 1)
-        assert math.isclose(probability_logit.mean().item(), 0, abs_tol=0.1)
+        assert math.isclose(probability_logit.mean().item(), 0, abs_tol=0.15)
 
 
 def test_discriminator_auxiliary_head_integration(
@@ -227,10 +195,19 @@ def test_full_network_integration(
         initialised_discriminator: nn.Module, initialised_aux_head: nn.Module,
         initialised_class_head: nn.Module
         ) -> None:
+    # Generating output dir:
+    path = os.path.join("data", "tests")
+    if not os.path.exists(path):
+        os.mkdir(path)
+
     # Generator step:
     fake_image = initialised_generator(torch.Tensor(random_numpy_noise_array))
+    save_image(
+        fake_image, os.path.join(path, "untrained_out.png"),
+        nrow=10, normalize=True, range=(-1, 1)
+    )
     assert fake_image is not None
-    assert math.isclose(torch.mean(fake_image).item(), 0.5, abs_tol=0.2)
+    assert math.isclose(torch.mean(fake_image).item(), 0, abs_tol=0.2)
 
     # Discriminator step:
     discriminator_features = initialised_discriminator(fake_image)
@@ -240,7 +217,7 @@ def test_full_network_integration(
     # Classification step:
     probability_logit = initialised_class_head(discriminator_features)
     assert probability_logit is not None
-    assert math.isclose(torch.mean(probability_logit).item(), 0, abs_tol=0.4)
+    assert math.isclose(torch.mean(probability_logit).item(), 0, abs_tol=0.2)
 
     # Latent codes step:
     latent_codes = initialised_aux_head(discriminator_features)
@@ -248,6 +225,7 @@ def test_full_network_integration(
     assert math.isclose(torch.mean(latent_codes).item(), 0, abs_tol=0.2)
 
 
+@typing.no_type_check
 def test_handler_instantiation(
         config_dict: dict, initialised_generator: nn.Module,
         initialised_discriminator: nn.Module, initialised_aux_head: nn.Module,
