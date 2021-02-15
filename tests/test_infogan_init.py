@@ -165,12 +165,11 @@ def test_head_initialisation(config_dict: dict) -> None:
 def test_discriminator_class_head_integration(
         random_numpy_image_array: np.ndarray,
         initialised_discriminator: nn.Module,
-        config_dict: dict
+        initialised_class_head: nn.Module
         ) -> None:
     discriminator_output = initialised_discriminator(torch.from_numpy(random_numpy_image_array))
-    class_head = model.ClassificationHead(config_dict["discriminator"])
     with torch.no_grad():
-        probability_logit = class_head(discriminator_output)
+        probability_logit = initialised_class_head(discriminator_output)
         assert probability_logit is not None
         assert probability_logit.size() == (100, 1)
         assert math.isclose(probability_logit.mean().item(), 0, abs_tol=0.15)

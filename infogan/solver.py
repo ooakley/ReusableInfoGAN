@@ -82,8 +82,6 @@ class InfoGANHandler:
         self._set_seed()
         self.discriminator = model.DiscriminatorNetwork(config_dict["discriminator"])
         self.discriminator.conv.apply(initialisations.disc_lrelu_init_weights)
-        initialisations.disc_lrelu_init_weights(self.discriminator.conv[0])
-        initialisations.disc_lrelu_init_weights(self.discriminator.conv[2])
         self.discriminator.to(self.device)
 
         # Initialise classification head:

@@ -86,8 +86,8 @@ def initialised_aux_head(config_dict: dict) -> nn.Module:
 
     # Instantiating and initialising model:
     aux_head_instance = model.AuxiliaryHead(config_dict)
-    aux_head_instance.linear.apply(initialisations.disc_lrelu_init_weights)
-    initialisations.disc_sigmoid_init_weights(aux_head_instance.linear[-1])
+    aux_head_instance.linear.apply(lambda x: initialisations.disc_lrelu_init_weights(x, alpha=0.2))
+    initialisations.disc_sigmoid_init_weights(aux_head_instance.linear[-1], gain=0.3)
     return aux_head_instance
 
 
@@ -118,7 +118,9 @@ def network_changed(network1: nn.Module, network2: nn.Module) -> bool:
     # Iterating through parameters:
     for param1, param2 in zip(network1.children(), network2.children()):
         assert type(param1) == type(param2)
-        if type(param1) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d}:
+        if type(param1) in {
+                nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d, nn.BatchNorm1d
+                }:
             weights1 = np.array(param1.weight.data.cpu())
             weights2 = np.array(param2.weight.data.cpu())
             assert np.all(np.equal(weights1, weights1))
@@ -131,9 +133,11 @@ def network_changed(network1: nn.Module, network2: nn.Module) -> bool:
                 assert np.all(np.equal(bias1, bias1))
                 assert np.all(np.equal(bias2, bias2))
                 bias_different.append(bool(np.all(np.not_equal(bias1, bias2))))
+
+    # Print for debugging:
     print(f"--- --- {network1} --- ---")
-    print(f"Weight same: {weight_different}")
-    print(f"Bias same: {bias_different}")
+    print(f"Is weight different: {weight_different}")
+    print(f"Is bias different: {bias_different}")
     return all(weight_different) and all(bias_different)
 
 
@@ -145,7 +149,9 @@ def network_not_changed(network1: nn.Module, network2: nn.Module) -> bool:
     # Iterating though parameters:
     for param1, param2 in zip(network1.children(), network2.children()):
         assert type(param1) == type(param2)
-        if type(param1) in {nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d}:
+        if type(param1) in {
+                nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d, nn.BatchNorm1d
+            }:
             weights1 = np.array(param1.weight.data.cpu())
             weights2 = np.array(param2.weight.data.cpu())
             assert np.all(np.equal(weights1, weights1))
@@ -158,7 +164,9 @@ def network_not_changed(network1: nn.Module, network2: nn.Module) -> bool:
                 assert np.all(np.equal(bias1, bias1))
                 assert np.all(np.equal(bias2, bias2))
                 bias_same.append(bool(np.all(np.equal(bias1, bias2))))
+    
+    # Print for debugging:
     print(f"--- --- {network1} --- ---")
-    print(f"Weight same: {weight_same}")
-    print(f"Bias same: {bias_same}")
+    print(f"Is weight same: {weight_same}")
+    print(f"Is bias same: {bias_same}")
     return (all(weight_same) and all(bias_same))
