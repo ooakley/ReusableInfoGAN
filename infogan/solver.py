@@ -1,4 +1,4 @@
-"""Contains class for handling save/load logic, training and inference for the infoGAN model."""
+"""Contains class for training and inference for the infoGAN model."""
 import os
 import copy
 import json
@@ -10,6 +10,9 @@ import torch.nn as nn
 import numpy as np
 
 from infogan import model, initialisations
+
+
+LOG_DIR = "logs"
 
 
 class InfoGANHandler:
@@ -58,7 +61,7 @@ class InfoGANHandler:
         torch.manual_seed(seed)
 
     def _set_logs(self, config_dict: dict) -> None:
-        log_dir = "logs"
+        log_dir = LOG_DIR
         if not os.path.isdir(log_dir):
             os.mkdir(log_dir)
         self.date_str = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
@@ -87,14 +90,14 @@ class InfoGANHandler:
         # Initialise classification head:
         self._set_seed()
         self.class_head = model.ClassificationHead(config_dict["discriminator"])
-        self.class_head.linear.apply(initialisations.disc_sigmoid_init_weights)
+        initialisations.disc_sigmoid_init_weights(self.class_head.linear[0], gain=0.1)
         self.class_head.to(self.device)
 
         # Initialise auxiliary head:
         self._set_seed()
         self.aux_head = model.AuxiliaryHead(config_dict)
-        self.aux_head.linear.apply(lambda x: initialisations.disc_lrelu_init_weights(x, alpha=0.2))
-        initialisations.disc_sigmoid_init_weights(self.aux_head.linear[-1], gain=0.3)
+        self.aux_head.linear.apply(lambda x: initialisations.disc_lrelu_init_weights(x, gain=1.4))
+        initialisations.disc_sigmoid_init_weights(self.aux_head.linear[-1])
         self.aux_head.to(self.device)
 
     def calculate_discriminator_loss(
@@ -178,7 +181,7 @@ class InfoGANHandler:
 
         # Generator info loss:
         predicted_codes = self.aux_head(fake_features)
-        gen_info_loss = self.mse_loss(predicted_codes, noise_vector).mean()
+        gen_info_loss = self.mse_loss(predicted_codes, noise_vector[:, 0:self.zdim]).mean()
 
         return gen_class_loss, gen_info_loss
 
@@ -244,7 +247,7 @@ class InfoGANHandler:
         for real_images in dataloader:
             real_images = real_images.to(self.device)
             real_images.requires_grad = True
-            noise_vector = torch.randn(real_images.shape[0], self.zdim)
+            noise_vector = torch.randn(real_images.shape[0], self.zdim + 1)
             noise_vector = noise_vector.to(self.device)
             self.train_on_batch(real_images, noise_vector)
         

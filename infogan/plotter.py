@@ -6,6 +6,8 @@ from typing import List, Iterator, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+from sklearn.decomposition import PCA
 import torch
 from torchvision.utils import save_image
 
@@ -50,7 +52,9 @@ class InfoGANPlotter:
     def __init__(self, model: solver.InfoGANHandler) -> None:
         """Initialise plotter with trained model."""
         self.model = model
-        self.log_path = model.log_path
+        self.log_path = os.path.join(model.log_path, "plots")
+        if not os.path.isdir(self.log_path):
+            os.mkdir(self.log_path)
         self.loss_history = model.loss_history
         self.metadata = {
             "date": datetime.now().strftime("%Y-%m-%d-%H:%M:%S"),
@@ -82,7 +86,7 @@ class InfoGANPlotter:
 
         # Saving file:
         filepath = os.path.join(self.log_path, "info_reg_loss_plot.png")
-        plt.savefig(filepath, dpi=300, metadata=self.metadata)
+        fig.savefig(filepath, dpi=300, metadata=self.metadata)
         plt.close()
 
         # Generating BCE plot:
@@ -96,7 +100,7 @@ class InfoGANPlotter:
 
         # Saving file:
         filepath = os.path.join(self.log_path, "bce_loss_plot.png")
-        plt.savefig(filepath, dpi=300, metadata=self.metadata)
+        fig.savefig(filepath, dpi=300, metadata=self.metadata)
         plt.close()
 
     def plot_generated_images(self, real_images: torch.Tensor) -> None:
@@ -111,9 +115,13 @@ class InfoGANPlotter:
         self.model.aux_head.eval()
         features = self.model.discriminator(real_images)
         latent_codes = self.model.aux_head(features)
+        noise_variable = torch.randn(latent_codes.shape[0], 1).to(self.model.device)
+        full_codes = torch.cat((latent_codes, noise_variable), 1)
+        self.model.discriminator.train()
+        self.model.aux_head.train()
 
         # Generating fake images:
-        fake_images = self.model.generator(latent_codes)
+        fake_images = self.model.generator(full_codes)
         generated_filepath = os.path.join(self.log_path, "generated_images.png")
         save_image(fake_images, generated_filepath, nrow=10, normalize=True, range=(-1, 1))
 
@@ -141,3 +149,55 @@ class InfoGANPlotter:
         # Saving to file:
         disc_tracker.save_gradient_plot(disc_filepath)
         gen_tracker.save_gradient_plot(gen_filepath)
+
+    def plot_image_pca(self, real_images: torch.Tensor, path: str = None) -> None:
+        """
+        Save scatterplot of images embedded into latent space.
+
+        Derived from:
+        https://www.kaggle.com/gaborvecsei/plants-t-sne
+        """
+        # Generating path:
+        if path is None:
+            filepath = os.path.join(self.log_path, "embeddings_pca_plot.png")
+        if path is not None:
+            filepath = os.path.join(path, "embeddings_pca_plot.png")
+
+        # Generating embeddings:
+        real_images = real_images.to(self.model.device)
+        self.model.discriminator.eval()
+        self.model.aux_head.eval()
+        features = self.model.discriminator(real_images)
+        latent_codes = self.model.aux_head(features)
+        np_latent_codes = latent_codes.detach().cpu().numpy()
+        embeddings = PCA(n_components=2).fit_transform(np_latent_codes)
+        self.model.discriminator.train()
+        self.model.aux_head.train()
+
+        # Generating scatterplot:
+        plot_images = (real_images[:, 0, :, :].detach().cpu().numpy() + 1) / 2
+        fig, ax = plt.subplots(figsize=(60, 60))
+        artists = []
+        for i in range(plot_images.shape[0]):
+            img_array = plot_images[i].squeeze()
+            img = OffsetImage(img_array, zoom=1, cmap='gray')
+            ab = AnnotationBbox(img,
+                (embeddings[i, 0], embeddings[i, 1]),
+                xycoords='data', frameon=False
+            )
+            artists.append(ax.add_artist(ab))
+        
+        # Tweaking plot:
+        ax.update_datalim(embeddings)
+        ax.autoscale()
+        fig.set_facecolor("k")
+        ax.set_facecolor("k")
+        ax.spines['bottom'].set_color('w')
+        ax.spines['left'].set_color('w')
+        ax.tick_params(axis='x', colors='w')
+        ax.tick_params(axis='y', colors='w')
+
+        # Saving to file:
+        fig.tight_layout()
+        fig.savefig(filepath, dpi=150, metadata=self.metadata)
+        plt.close()

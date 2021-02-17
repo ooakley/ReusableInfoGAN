@@ -132,4 +132,5 @@ dmypy.json
 .pyre/
 
 # Logs
-logs/
+logs/*
+!logs/2021-02-16-15:11:35-train-basic

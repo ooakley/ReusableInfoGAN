@@ -49,7 +49,7 @@ def gen_linear_init_weights(m: Any, gain: float = 1) -> None:
         nn.init.normal_(m.bias.data, 0.0, 0.01)
 
 
-def gen_relu_init_weights(m: Any, gain: float = 0.3) -> None:
+def gen_relu_init_weights(m: Any, gain: float = 0.1) -> None:
     """Initialise weights of a module using Xavier normal initialisation."""
     # See https://github.com/pytorch/pytorch/issues/18182 for original formulation.
     if type(m) == nn.ConvTranspose2d:
@@ -57,12 +57,12 @@ def gen_relu_init_weights(m: Any, gain: float = 0.3) -> None:
         if m.bias is not None:
             nn.init.normal_(m.bias, 0, 0.01)
 
-    if type(m) == nn.BatchNorm2d:
-        nn.init.normal_(m.weight.data, 1.0, 0.01)
-        nn.init.normal_(m.bias.data, 0.0, 0.01)
+    # if type(m) == nn.BatchNorm2d:
+    #     nn.init.normal_(m.weight.data, 1.0, 0.01)
+    #     nn.init.normal_(m.bias.data, 0.0, 0.01)
 
 
-def gen_tanh_init_weights(m: Any, gain: float = 0.5) -> None:
+def gen_tanh_init_weights(m: Any, gain: float = 1) -> None:
     """Initialise weights of a module using Xavier normal initialisation."""
     # See https://github.com/pytorch/pytorch/issues/18182 for original formulation.
     assert type(m) == nn.ConvTranspose2d
@@ -71,11 +71,11 @@ def gen_tanh_init_weights(m: Any, gain: float = 0.5) -> None:
         nn.init.normal_(m.bias, 0, 0.01)
 
 
-def disc_lrelu_init_weights(m: Any, alpha: float = 0.2, bn_weight: float = 1) -> None:
+def disc_lrelu_init_weights(m: Any, gain: float = 1.4, bn_weight: float = 1) -> None:
     """Initialise weights of a module using Xavier normal initialisation."""
     # See https://github.com/pytorch/pytorch/issues/18182 for original formulation.
     if type(m) in {nn.Conv2d, nn.Linear}:
-        nn.init.kaiming_normal_(m.weight.data, alpha, mode='fan_out')
+        nn.init.xavier_normal_(m.weight.data, gain)
         if m.bias is not None:
             nn.init.normal_(m.bias.data, 0, 0.001)
 
@@ -84,7 +84,7 @@ def disc_lrelu_init_weights(m: Any, alpha: float = 0.2, bn_weight: float = 1) ->
         nn.init.normal_(m.bias.data, 0.0, 0.001)
 
 
-def disc_sigmoid_init_weights(m: Any, gain: float = 0.1) -> None:
+def disc_sigmoid_init_weights(m: Any, gain: float = 1) -> None:
     """Initialise weights of a module using Xavier normal initialisation."""
     # See https://github.com/pytorch/pytorch/issues/18182 for original formulation.
     if type(m) == nn.Linear:

@@ -31,7 +31,7 @@ def random_numpy_image_array() -> np.ndarray:
 @pytest.fixture
 def random_numpy_noise_array() -> np.ndarray:
     rng = default_rng(0)
-    array = rng.standard_normal((100, 10))
+    array = rng.standard_normal((100, 11))
     array = array.astype(np.float32)
     return array
 
@@ -86,7 +86,7 @@ def initialised_aux_head(config_dict: dict) -> nn.Module:
 
     # Instantiating and initialising model:
     aux_head_instance = model.AuxiliaryHead(config_dict)
-    aux_head_instance.linear.apply(lambda x: initialisations.disc_lrelu_init_weights(x, alpha=0.2))
+    aux_head_instance.linear.apply(lambda x: initialisations.disc_lrelu_init_weights(x, gain=0.2))
     initialisations.disc_sigmoid_init_weights(aux_head_instance.linear[-1], gain=0.3)
     return aux_head_instance
 
@@ -104,7 +104,7 @@ def cell_image_sample(config_dict: dict) -> data_utils.FullDataset:
     numpy_dataset: List[np.ndarray] = []
     for f in numpy_files:
         path = os.path.join(numpy_data_path, f)
-        data = np.expand_dims(np.load(path)[:25, :, :, 1], 1).astype(np.float32)
+        data = (np.expand_dims(np.load(path)[:100, :, :, 1], 1).astype(np.float32) * 2) - 1
         numpy_dataset.append(data)
     dataset = data_utils.FullDataset(np.concatenate(numpy_dataset, axis=0))
     return dataset
@@ -121,6 +121,9 @@ def network_changed(network1: nn.Module, network2: nn.Module) -> bool:
         if type(param1) in {
                 nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d, nn.BatchNorm1d
                 }:
+            if param1.weight is None:
+                assert param2.weight is None
+                continue
             weights1 = np.array(param1.weight.data.cpu())
             weights2 = np.array(param2.weight.data.cpu())
             assert np.all(np.equal(weights1, weights1))
@@ -152,6 +155,9 @@ def network_not_changed(network1: nn.Module, network2: nn.Module) -> bool:
         if type(param1) in {
                 nn.Linear, nn.Conv2d, nn.ConvTranspose2d, nn.BatchNorm2d, nn.BatchNorm1d
             }:
+            if param1.weight is None:
+                assert param2.weight is None
+                continue
             weights1 = np.array(param1.weight.data.cpu())
             weights2 = np.array(param2.weight.data.cpu())
             assert np.all(np.equal(weights1, weights1))

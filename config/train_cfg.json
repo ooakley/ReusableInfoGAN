@@ -1,9 +1,9 @@
 {
-    "config_name": "train-2",
+    "config_name": "train-basic",
     "dataset": "2020-10-28-AIS-005",
-    "epochs": 50,
+    "epochs": 200,
     "batch_size": 100,
-    "learning_rate": 0.0001,
+    "learning_rate": 0.0002,
     "discopt_lr_ratio": 1,
     "gamma": 2,
     "gamma_anneal": 1,

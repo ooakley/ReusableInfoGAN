@@ -17,24 +17,24 @@ class GeneratorNetwork(nn.Module):
         filter_widths = gen_cfg["upconv_filter_widths"]
         self.initial_channels = filter_widths[0]
         self.linear = nn.Sequential(
-            nn.Linear(zdim, filter_widths[0] * 4 * 4)
+            nn.Linear(zdim + 1, filter_widths[0] * 4 * 4)
         )
         self.conv = nn.Sequential(
             nn.ConvTranspose2d(filter_widths[0], filter_widths[1], 3, 2, 1, output_padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(filter_widths[1]),
+            nn.BatchNorm2d(filter_widths[1], affine=False),
 
             nn.ConvTranspose2d(filter_widths[1], filter_widths[2], 3, 2, 1, output_padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(filter_widths[2]),
+            nn.BatchNorm2d(filter_widths[2], affine=False),
 
             nn.ConvTranspose2d(filter_widths[2], filter_widths[3], 3, 2, 1, output_padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(filter_widths[3]),
+            nn.BatchNorm2d(filter_widths[3], affine=False),
 
             nn.ConvTranspose2d(filter_widths[3], filter_widths[4], 3, 2, 1, output_padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(filter_widths[4]),
+            nn.BatchNorm2d(filter_widths[4], affine=False),
 
             nn.ConvTranspose2d(filter_widths[4], 1, 3, 1, 1),
             nn.Tanh()
@@ -110,7 +110,7 @@ class AuxiliaryHead(nn.Module):
         self.linear = nn.Sequential(
             nn.Linear(self.final_channels * 4 * 4, 512),
             nn.LeakyReLU(0.2),
-            nn.BatchNorm1d(512),
+            nn.LayerNorm(512),
             nn.Linear(512, self.zdim)
         )
 
